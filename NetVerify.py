@@ -1,7 +1,7 @@
 import os, sys, json, csv, re, ctypes, warnings, subprocess, time
 import paramiko
 from netmiko import ConnectHandler
-from netmiko.exceptions import NetmikoAuthenticationException
+from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
 from deepdiff import DeepDiff
 from collections import defaultdict
 from datetime import datetime
@@ -51,7 +51,7 @@ def trace_check(ip):
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='cp932' if os.name == 'nt' else 'utf-8')
         lines = res.stdout.splitlines()
-        filtered = [l for l in lines if l.strip() and not any(x in l for x in ["トレースしています", "ホップ数は最大", "完了しました"])]
+        filtered = [l for l in lines if l.strip() and not any(x in l for x in ["へのルートをトレースしています", "経由するホップ数は最大", "トレースを完了しました"])]
         return "\n".join(filtered)
     except KeyboardInterrupt: return f"{YELLOW}Tracerouteは中断されました。{RESET}"
     except Exception as e: return f"Traceroute失敗: {e}"
@@ -159,18 +159,19 @@ def main():
         hosts = load_hosts_flexible()
         if not hosts: continue
         
-        # リスト表示をループ外へ
+        # リスト表示をループの外に出す（複製防止）
         print(f"\n{YELLOW}[ 対象一覧 - モード: {mode_map[mode_in]} ]{RESET}")
         for i, h in enumerate(hosts): print(f"{i}: {h.get('name')} ({h.get('ip')})")
 
-        while True: # 番号選択ループ
+        indices = []
+        while True:
             try:
                 choice = input(f"番号 (all/0.../b): ").lower().strip()
                 if choice == 'b': break
                 if not choice: sys.stdout.write(CLEAR_LINE); continue
                 indices = range(len(hosts)) if choice == 'all' else [int(i.strip()) for i in choice.split(',') if i.strip().isdigit() and int(i.strip()) < len(hosts)]
-                if not indices: sys.stdout.write(CLEAR_LINE); continue
-                break # 有効な入力ならループ脱出
+                if indices: break
+                else: sys.stdout.write(CLEAR_LINE)
             except (KeyboardInterrupt, EOFError): choice = 'b'; break
 
         if choice == 'b': 
@@ -207,31 +208,42 @@ def main():
             for i, idx in enumerate(indices):
                 host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                 h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
-                device = { 'device_type': f"{host.get('vendor', 'cisco_ios')}{'_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''}", 'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 'secret': host.get('en_pw'), 'global_delay_factor': 2 }
+                
+                device = { 
+                    'device_type': f"{host.get('vendor', 'cisco_ios')}{'_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''}", 
+                    'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
+                    'secret': host.get('en_pw'), 'global_delay_factor': 2
+                }
 
                 print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                 net = None
                 try:
-                    # C1200特殊認証バイパスロジック
+                    # --- 【究極】C1200 SSH 認証スキップ＆強制ログイン救済回路 ---
                     try:
                         net = ConnectHandler(**device)
                     except NetmikoAuthenticationException as e:
-                        if "allowed types" in str(e):
-                            print(f"  {YELLOW}[INFO] C1200特殊認証を検知。RAWモードで突破を試みます...{RESET}")
+                        if "allowed types" in str(e) or "authentication type" in str(e).lower():
+                            print(f"  {YELLOW}[INFO] C1200特殊認証を検知。プロトコル認証をバイパスします...{RESET}")
+                            # Netmikoを通さず生のParamikoでセッションを確立
                             client = paramiko.SSHClient()
                             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                            # パスワード認証をスキップして接続（扉だけ開ける）
                             client.connect(ip, username=host.get('user'), password='', allow_agent=False, look_for_keys=False)
-                            chan = client.invoke_shell()
-                            # 画面越しにユーザー名とパスを流し込む
-                            for _ in range(50): # 最大5秒待機
-                                if chan.recv_ready():
-                                    out = chan.recv(1024).decode('utf-8', 'ignore')
-                                    if "User Name:" in out: chan.send(host.get('user') + "\n")
-                                    if "Password:" in out: chan.send(host.get('pw') + "\n"); break
+                            shell = client.invoke_shell()
+                            # 画面越しにユーザー名とパスを叩き込む
+                            for _ in range(50): # 最大5秒
+                                if shell.recv_ready():
+                                    buf = shell.recv(5000).decode('utf-8', 'ignore')
+                                    if "User Name:" in buf or "Username:" in buf:
+                                        shell.send(host.get('user') + '\n')
+                                    if "Password:" in buf or "password:" in buf:
+                                        shell.send(host.get('pw') + '\n')
+                                        break
                                 time.sleep(0.1)
-                            # 通過後、Netmikoの既存セッションとして再利用させる
-                            device['device_type'] = 'generic'
-                            net = ConnectHandler(**device)
+                            time.sleep(1)
+                            # ログインが完了した生きたセッションをNetmikoに渡して再利用
+                            device['device_type'] = 'cisco_s300' if 'cisco' in v_base else 'generic'
+                            net = ConnectHandler(existing_connection=client, **device)
                         else: raise
 
                     if ">" in net.find_prompt(): net.enable()
@@ -272,7 +284,7 @@ def main():
                 finally:
                     if net: net.disconnect()
                 if i == len(indices) - 1: print("\n" + "=" * 70)
-        except KeyboardInterrupt: print(f"\n{YELLOW}[CANCEL] 中断されました。{RESET}")
+        except KeyboardInterrupt: print(f"\n{YELLOW}[CANCEL] 中断されました。機器一覧に戻ります。{RESET}")
         print("")
 
 if __name__ == "__main__":
