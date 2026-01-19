@@ -1,0 +1,30 @@
+name: Build EXE
+
+on: [push] # コードを更新するたびに自動実行
+
+jobs:
+  build:
+    runs-on: windows-latest # Windows環境を使用
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install pyinstaller
+        # もし追加のライブラリがあればここに書く (例: pip install pandas)
+
+    - name: Build EXE
+      run: pyinstaller --onefile main.py
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: my-executable
+        path: dist/main.exe
