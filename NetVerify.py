@@ -242,14 +242,11 @@ def main():
                     host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                     h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
                     
-                    # --- 修正箇所: device定義に username_pattern を追加 ---
                     device = { 
                         'device_type': host.get('vendor', 'cisco_ios') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
                         'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
-                        'secret': host.get('en_pw'), 'global_delay_factor': 2,
-                        'username_pattern': r"(?:[Uu]ser\s*[Nn]ame|[Ll]ogin|user):"
+                        'secret': host.get('en_pw'), 'global_delay_factor': 2
                     }
-                    # --------------------------------------------------
 
                     print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                     try:
