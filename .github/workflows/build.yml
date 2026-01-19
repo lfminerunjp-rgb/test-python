@@ -22,10 +22,10 @@ jobs:
         # 例: pip install pandas
 
     - name: Build EXE
-      run: pyinstaller --onefile main.py
+      run: pyinstaller --onefile NetVerify.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: my-executable
-        path: dist/main.exe
+        path: dist/NetVerify.exe
