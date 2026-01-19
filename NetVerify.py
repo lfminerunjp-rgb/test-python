@@ -75,7 +75,7 @@ def find_teraterm():
     return None
 
 def create_ttl_macro(host_info):
-    """C1200等の2段階ログインに対応したログインマクロ (※成功済みのため固定)"""
+    """C1200等の2段階ログインに対応したログインマクロ(※変更なし)"""
     h_name, ip = host_info.get('name'), host_info.get('ip')
     user, pw, en_pw = host_info.get('user'), host_info.get('pw'), host_info.get('en_pw')
     proto = str(host_info.get('protocol')).lower()
@@ -186,7 +186,7 @@ def main():
             hosts = load_hosts_flexible()
             if not hosts: break
             
-            # 【重要】リスト複製防止のためループ外で一度だけ表示
+            # リスト複製防止：一度だけ表示
             print(f"\n{YELLOW}[ 対象一覧 - モード: {mode_map[mode_in]} ]{RESET}")
             for i, h in enumerate(hosts): print(f"{i}: {h.get('name')} ({h.get('ip')})")
             
@@ -201,7 +201,7 @@ def main():
                     else: sys.stdout.write(CLEAR_LINE)
                 except (KeyboardInterrupt, EOFError): break
 
-            if choice == 'b': # 画面クリアせずメニュー表示
+            if choice == 'b': # メニューに戻る
                 show_mode_menu()
                 break
 
@@ -232,7 +232,6 @@ def main():
                             except: pass
                     continue
 
-                # ログ・解析モード
                 ensure_dirs()
                 today = datetime.now().strftime("%Y%m%d")
                 for i, idx in enumerate(indices):
@@ -250,19 +249,18 @@ def main():
                     print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                     net = None
                     try:
-                        # 1次接続試行（通常のSSH/Telnet）
                         try:
                             net = ConnectHandler(**device)
                         except NetmikoAuthenticationException as e:
-                            # C1200等の認証エラー(Bad authentication type)に対する救済処理
-                            if "Bad authentication type" in str(e) or "allowed types" in str(e):
-                                print(f"  {YELLOW}[INFO] 特殊な認証を検知しました。C1200モードで接続を再試行します...{RESET}")
-                                device['password'] = '' # SSHレイヤーでのパスワードを空にする
-                                device['device_type'] = 'generic_term_ssh' # 一旦汎用ターミナルとして接続
+                            # C1200救済ロジック：genericドライバを使用（修正済み）
+                            if "allowed types" in str(e) or "authentication type" in str(e).lower():
+                                print(f"  {YELLOW}[INFO] 特殊な認証を検知しました。C1200モードで再試行します...{RESET}")
+                                device['password'] = '' 
+                                device['device_type'] = 'generic' # リストに実在する汎用ドライバに変更
                                 net = ConnectHandler(**device)
-                            else: raise # 通常のパスワード間違いなどはそのままエラーへ
+                            else: raise
 
-                        # C1200/特殊ログイン対応：画面上のプロンプトを監視して対話送信
+                        # 画面上のログインプロンプトに応答
                         for _ in range(3):
                             buf = net.read_channel()
                             if any(x in buf for x in ['User Name:', 'Username:', 'login:']):
@@ -273,10 +271,8 @@ def main():
                                 time.sleep(1)
                             else: break
                         
-                        # 特権モードへ
                         if ">" in net.find_prompt(): net.enable()
                         
-                        # 以降は通常のコマンド取得
                         current_data, log_body, search_hits = {}, f"\n! --- Append Log: {datetime.now()} ---\n! Device: {h_name}\n\n", defaultdict(list)
                         for cmd in target_commands:
                             print(f"  - {cmd}"); raw_out = net.send_command(cmd, strip_prompt=False, strip_command=False)
