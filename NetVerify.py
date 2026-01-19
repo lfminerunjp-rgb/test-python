@@ -29,10 +29,8 @@ else: BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SNAPSHOT_DIR, LOG_DIR = os.path.join(BASE_DIR, "snapshots"), os.path.join(BASE_DIR, "logs")
 
 def ensure_dirs():
-    """フォルダが存在しない場合に作成する"""
     for d in [SNAPSHOT_DIR, LOG_DIR]:
-        if not os.path.exists(d):
-            os.makedirs(d, exist_ok=True)
+        if not os.path.exists(d): os.makedirs(d, exist_ok=True)
 
 # --- 機能関数 ---
 
@@ -52,35 +50,12 @@ def trace_check(ip):
         return res.stdout
     except: return "Traceroute失敗"
 
-def find_teraterm():
-    standard_paths = [r"C:\Program Files (x86)\teraterm\ttpmacro.exe", r"C:\Program Files\teraterm\ttpmacro.exe"]
-    for p in standard_paths:
-        if os.path.exists(p): return p
-    return None
-
-def create_ttl_macro(host_info):
-    h_name, ip = host_info.get('name'), host_info.get('ip')
-    user, pw, en_pw = host_info.get('user'), host_info.get('pw'), host_info.get('en_pw')
-    proto = str(host_info.get('protocol')).lower()
-    macro_path = os.path.join(BASE_DIR, f"temp_{sanitize_filename(h_name)}.ttl")
-    with open(macro_path, "w", encoding='cp932') as f:
-        if proto == 'telnet': f.write(f"connect '{ip}:23 /nossh /T=1'\n")
-        else: f.write(f"connect '{ip}:22 /ssh /2 /auth=password /user={user} /passwd={pw}'\n")
-        f.write("pause 1\nwait 'User Name:' 'Username:' 'login:' '>' '#'\n")
-        f.write(f"if result >= 1 and result <= 3 then\n  sendln '{user}'\n  wait 'Password:' 'password:'\n  sendln '{pw}'\n  wait '>' '#'\nendif\n")
-        f.write(f"if result = 4 then\n  sendln 'enable'\n  waitregex '[Pp]assword|パスワード'\n  sendln '{en_pw}'\n  wait '#'\nendif\n")
-    return macro_path
-
 def sanitize_filename(name):
     return re.sub(r'[\\/:*?"<>|]', '_', str(name))
 
 def safe_parse_path(path):
     parts = re.findall(r"['\"]([^'\"]+)['\"]", path)
     return (parts[0] if len(parts) > 0 else "Unknown"), (parts[1] if len(parts) > 1 else "Global")
-
-def format_val(val):
-    if isinstance(val, dict): return " { " + ", ".join([f"{k}: {v}" for k, v in val.items()]) + " }"
-    return str(val)
 
 def restructure_data(data):
     if not isinstance(data, list): return data
@@ -130,147 +105,96 @@ def load_hosts_flexible():
     return []
 
 def show_mode_menu():
-    print(f"\n{BLUE}====={RESET}\n   NetVerify (C1200 Optimized)\n{BLUE}====={RESET}")
-    print(f"\n{YELLOW}[ モード選択 ]{RESET}\n0: 接続確認 (t:trace)\n1: ログイン\n2: ログ取得\n3: 解析・比較\n4: ログ+比較\nc: クリア\nq: 終了")
+    print(f"\n{BLUE}====={RESET}\n   NetVerify (C1200 Expert Fix)\n{BLUE}====={RESET}")
+    print(f"\n{YELLOW}[ モード選択 ]{RESET}\n0: 接続確認\n2: ログ取得\n3: 解析・比較\n4: ログ+比較\nc: クリア\nq: 終了")
 
 def main():
-    tt_macro_exe = None
-    mode_map = {"0": "接続確認", "0t": "接続確認(Trace付)", "1": "ログイン", "2": "ログ取得", "3": "解析・比較", "4": "ログ+比較"}
+    mode_map = {"0": "接続確認", "2": "ログ取得", "3": "解析・比較", "4": "ログ+比較"}
     show_mode_menu()
     while True:
         try:
             mode_in = input("選択: ").lower().strip()
-            if not mode_in: sys.stdout.write(CLEAR_LINE); continue
             if mode_in == 'q': break
             if mode_in == 'c': os.system('cls' if os.name == 'nt' else 'clear'); show_mode_menu(); continue
-            if mode_in not in mode_map: sys.stdout.write(CLEAR_LINE); continue
-        except (KeyboardInterrupt, EOFError): sys.exit(0)
+            if mode_in not in mode_map: continue
 
-        while True:
             hosts = load_hosts_flexible()
-            if not hosts: break
-            print(f"\n{YELLOW}[ 対象一覧 - モード: {mode_map[mode_in]} ]{RESET}")
+            if not hosts: continue
+            
+            print(f"\n{YELLOW}[ 対象一覧 ]{RESET}")
             for i, h in enumerate(hosts): print(f"{i}: {h.get('name')} ({h.get('ip')})")
             
-            choice = input(f"番号 (all/0.../b): ").lower().strip()
-            if choice == 'b': show_mode_menu(); break
-            if not choice: sys.stdout.write(CLEAR_LINE); continue
-            indices = range(len(hosts)) if choice == 'all' else [int(i.strip()) for i in choice.split(',') if i.strip().isdigit() and int(i.strip()) < len(hosts)]
-            if not indices: continue
+            choice = input(f"番号: ").lower().strip()
+            indices = range(len(hosts)) if choice == 'all' else [int(i.strip()) for i in choice.split(',') if i.strip().isdigit()]
+            
+            ensure_dirs()
+            today = datetime.now().strftime("%Y%m%d")
 
-            try:
-                if mode_in in ['0', '0t']:
-                    for idx in indices:
-                        host = hosts[idx]; ip = host.get('ip')
-                        status = f"{GREEN}[SUCCESS]{RESET}" if ping_check(ip) else f"{RED}[FAIL]{RESET}"
-                        print(f"  {status} {host.get('name')} ({ip})")
-                        if mode_in == '0t': print(f"{trace_check(ip)}")
-                    continue
+            for idx in indices:
+                host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
+                h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
+                
+                # --- C1200 決定版設定 ---
+                device = { 
+                    'device_type': 'cisco_s200', # 認証を通すために必須
+                    'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
+                    'secret': host.get('en_pw'), 
+                    'global_delay_factor': 2,
+                    'session_preparation': False, # 【重要】接続直後のプロンプト自動判定をスキップ
+                }
 
-                if mode_in == '1':
-                    if not tt_macro_exe: tt_macro_exe = find_teraterm()
-                    if not tt_macro_exe: print(f"{RED}[!] ttpmacro.exeが見つかりません。{RESET}")
-                    else:
-                        for idx in indices:
-                            host = hosts[idx]
-                            print(f"  {GREEN}>>> TeraTerm起動: {host.get('name')}{RESET}")
-                            ttl = create_ttl_macro(host)
-                            subprocess.Popen([tt_macro_exe, ttl])
-                            time.sleep(0.5)
-                    continue
+                print("\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}] に接続中...{RESET}")
+                try:
+                    with ConnectHandler(**device) as net:
+                        # 自動初期化をスキップしたため、手動でプロンプトを出す
+                        time.sleep(1)
+                        net.write_channel("\n")
+                        time.sleep(1)
+                        
+                        # 特権モード移行
+                        net.write_channel("enable\n")
+                        time.sleep(1)
+                        out = net.read_channel()
+                        if "Password" in out or "password" in out:
+                            net.write_channel(host.get('en_pw') + "\n")
+                            time.sleep(1)
 
-                ensure_dirs()
-                s_path, search_keywords = os.path.join(BASE_DIR, "search.txt"), []
-                if os.path.exists(s_path):
-                    with open(s_path, "r", encoding='utf-8') as f: search_keywords = [l.strip() for l in f if l.strip()]
+                        # ページング無効化
+                        net.send_command("terminal datadump", expect_string=r'[#>]')
 
-                today = datetime.now().strftime("%Y%m%d")
-                for idx in indices:
-                    host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
-                    h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
-                    
-                    # --- C1200認証対策: cisco_s200を使用し、各種タイムアウトを延長 ---
-                    vendor = host.get('vendor', 'cisco_s200')
-                    device = { 
-                        'device_type': vendor + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
-                        'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
-                        'secret': host.get('en_pw'), 
-                        'global_delay_factor': 4, # SMBスイッチの遅い応答に対応
-                        'read_timeout': 90,
-                        'fast_cli': False
-                    }
+                        current_data, log_body = {}, f"\n! --- Log: {datetime.now()} ---\n! Device: {h_name}\n\n"
+                        
+                        for cmd in target_commands:
+                            print(f"  - {cmd}")
+                            # Netmikoの判定を無視して、# か > が出るまで待つ
+                            raw_out = net.send_command(cmd, expect_string=r'[#>]', strip_prompt=False, strip_command=False)
+                            log_body += f"{raw_out}\n\n"
 
-                    print("\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}] に接続中...{RESET}")
-                    try:
-                        with ConnectHandler(**device) as net:
-                            # ログイン直後のプロンプトを安定させるためにEnterを送信
-                            net.write_channel("\n")
-                            time.sleep(2)
-                            
-                            # プロンプトの確認と特権モード移行
-                            prompt = net.find_prompt()
-                            if ">" in prompt: net.enable()
-                            
-                            current_data, log_body, search_hits = {}, f"\n! --- Append Log: {datetime.now()} ---\n! Device: {h_name}\n\n", defaultdict(list)
-                            
-                            # ページング無効化 (C1200用)
-                            net.send_command("terminal datadump", expect_string=r'[#>]')
-
-                            for cmd in target_commands:
-                                print(f"  - {cmd}")
-                                # expect_stringでプロンプトを明示的に待つ
-                                raw_out = net.send_command(cmd, strip_prompt=False, strip_command=False, expect_string=r'[#>]')
-                                log_body += f"{raw_out}\n\n"
-                                
-                                for kw in search_keywords:
-                                    for line in raw_out.splitlines():
-                                        if kw.lower() in line.lower():
-                                            hi = re.sub(re.escape(kw), lambda m: f"{YELLOW}{m.group()}{RESET}", line.strip(), flags=re.IGNORECASE)
-                                            search_hits[kw].append(f"[{cmd}] {hi}")
-
-                                if mode_in in ['3', '4']:
-                                    try:
-                                        parsed = net.send_command(cmd, use_textfsm=True)
-                                        current_data[cmd] = restructure_config(parsed) if "running-config" in cmd else restructure_data(parsed)
-                                    except: current_data[cmd] = raw_out
-                            
-                            if search_hits:
-                                print(f"\n{YELLOW}[ 検索結果 ]{RESET}"); [print(f"▼ '{YELLOW}{k}{RESET}':\n" + "\n".join(v)) for k, v in search_hits.items()]
-
-                            if mode_in in ['2', '4']:
-                                log_path = os.path.join(LOG_DIR, f"{h_file}_{today}.log")
-                                with open(log_path, "a", encoding='utf-8') as f: f.write(log_body)
-                                print(f"  {BLUE}[Log] logs/{h_file}_{today}.log (保存完了){RESET}")
-                            
                             if mode_in in ['3', '4']:
-                                snap_p = os.path.join(SNAPSHOT_DIR, f"snapshot_{h_file}.json")
-                                gold_p = os.path.join(SNAPSHOT_DIR, f"正常時_snapshot_{h_file}.json")
-                                target = gold_p if os.path.exists(gold_p) else (snap_p if os.path.exists(snap_p) else None)
-                                
-                                if target:
-                                    print(f"  {BLUE}[INFO] {os.path.basename(target)}と比較中...{RESET}")
-                                    with open(target, "r", encoding='utf-8') as f: old_data = json.load(f)
-                                    diff = DeepDiff(old_data, current_data, ignore_order=True)
-                                    if diff:
-                                        print(f"\n{YELLOW}== 差分検出 =={RESET}")
-                                        report = defaultdict(list)
-                                        for cat, det in diff.items():
-                                            items = det.items() if isinstance(det, dict) else zip(det, det)
-                                            for path, val in items:
-                                                c, sec = safe_parse_path(path)
-                                                if cat == 'values_changed': report[c].append(f"  対象: {sec} | {RED}{val['old_value']}{RESET} -> {BLUE}{val['new_value']}{RESET}")
-                                                elif 'added' in cat: report[c].append(f"  対象: {sec} {BLUE}+ ADDED : {format_val(val)}{RESET}")
-                                                elif 'removed' in cat: report[c].append(f"  対象: {sec} {RED}- REMOVED{RESET}")
-                                        for cn, msgs in report.items(): print(f"\n{YELLOW}[差分あり] {cn}{RESET}"); [print(m) for m in msgs]
-                                    else: print(f"  {GREEN}[OK] 差分なし{RESET}")
-                                
-                                if os.path.exists(snap_p):
-                                    os.rename(snap_p, os.path.join(SNAPSHOT_DIR, f"snapshot_{h_file}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"))
-                                with open(snap_p, "w", encoding='utf-8') as f: json.dump(current_data, f, indent=4, ensure_ascii=False)
-                    except Exception as e: print(f"  {RED}[!] エラー: {e}{RESET}")
-                print("\n" + "=" * 70)
-            except KeyboardInterrupt: print(f"\n{YELLOW}[CANCEL] 中断されました。{RESET}")
+                                try:
+                                    parsed = net.send_command(cmd, use_textfsm=True, expect_string=r'[#>]')
+                                    current_data[cmd] = restructure_config(parsed) if "running-config" in cmd else restructure_data(parsed)
+                                except: current_data[cmd] = raw_out
+                        
+                        # ログ保存
+                        if mode_in in ['2', '4']:
+                            with open(os.path.join(LOG_DIR, f"{h_file}_{today}.log"), "a", encoding='utf-8') as f: f.write(log_body)
+                            print(f"  {BLUE}[Log] 保存完了{RESET}")
+                        
+                        # 比較処理
+                        if mode_in in ['3', '4']:
+                            snap_p = os.path.join(SNAPSHOT_DIR, f"snapshot_{h_file}.json")
+                            if os.path.exists(snap_p):
+                                with open(snap_p, "r", encoding='utf-8') as f: old_data = json.load(f)
+                                diff = DeepDiff(old_data, current_data, ignore_order=True)
+                                if diff: print(f"{YELLOW}  [!] 差分あり{RESET}")
+                                else: print(f"{GREEN}  [OK] 差分なし{RESET}")
+                                os.rename(snap_p, os.path.join(SNAPSHOT_DIR, f"old_snapshot_{h_file}_{datetime.now().strftime('%H%M%S')}.json"))
+                            with open(snap_p, "w", encoding='utf-8') as f: json.dump(current_data, f, indent=4, ensure_ascii=False)
+
+                except Exception as e: print(f"  {RED}[!] エラー: {e}{RESET}")
+            print("\n" + "=" * 70)
+        except KeyboardInterrupt: break
 
 if __name__ == "__main__":
-    try: main()
-    except (KeyboardInterrupt, EOFError): sys.exit(0)
+    main()
