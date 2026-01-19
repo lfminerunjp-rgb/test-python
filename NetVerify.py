@@ -242,16 +242,26 @@ def main():
                     host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                     h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
                     
-                    # --- 引数をNetmikoのバージョンに合わせて修正 ---
+                    # --- Netmiko接続設定 (C1200特有のプロンプト対策) ---
+                    vendor_type = host.get('vendor', 'cisco_ios')
+                    is_telnet = str(host.get('protocol')).lower() == 'telnet'
+                    device_type = vendor_type + ('_telnet' if is_telnet else '')
+
                     device = { 
-                        'device_type': host.get('vendor', 'cisco_ios') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
+                        'device_type': device_type, 
                         'host': ip, 
                         'username': host.get('user'), 
                         'password': host.get('pw'), 
                         'secret': host.get('en_pw'), 
-                        'global_delay_factor': 4,  # プロンプト認識を安定させるため値を上げました
-                        'read_timeout': 90         # タイムアウト時間を十分に確保しました
+                        'global_delay_factor': 2,
+                        'auth_timeout': 60  # 認証タイムアウトを延長
                     }
+
+                    # C1200/C1300/SGシリーズ等のSMBスイッチ特有の修正
+                    if any(x in vendor_type.lower() for x in ['s200', 's300', 'smb']):
+                        # Netmikoの標準的な引数を使用して、「User Name:」という特殊なプロンプトを認識させる
+                        device['custom_auth_username_pattern'] = r'User[ \t]*Name[:]'
+                        device['custom_auth_password_pattern'] = r'Password[:]'
 
                     print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                     try:
