@@ -76,7 +76,7 @@ def find_teraterm():
     return None
 
 def create_ttl_macro(host_info):
-    """C1200等の2段階ログインに対応したログインマクロ (SSH/Telnet共通)"""
+    """【変更なし】C1200等の2段階ログインに対応したログインマクロ (SSH/Telnet共通)"""
     h_name, ip = host_info.get('name'), host_info.get('ip')
     user, pw, en_pw = host_info.get('user'), host_info.get('pw'), host_info.get('en_pw')
     proto = str(host_info.get('protocol')).lower()
@@ -242,25 +242,22 @@ def main():
                     host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                     h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
                     
-                    # --- 接続デバイス設定 (C1200 / cisco_s200 向け最適化版) ---
+                    # --- Python側の接続設定 (Cisco C1200 / cisco_s200 向け修正) ---
                     device = { 
                         'device_type': host.get('vendor', 'cisco_s200') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
                         'host': ip, 
                         'username': host.get('user'), 
                         'password': host.get('pw'), 
                         'secret': host.get('en_pw'), 
-                        'global_delay_factor': 4,       # 全体的な処理速度を落として確実に実行
-                        'conn_timeout': 30,             # 接続タイムアウトを延長
-                        'read_timeout_override': 60,    # プロンプト待ち時間を大幅に延長
-                        'fast_cli': False               # 1文字ずつ丁寧に送る
+                        'global_delay_factor': 2,        # 安定用の係数
+                        'username_prompt': r"User Name:", # 【修正】実際のプロンプトを指定
+                        'password_prompt': r"Password:",  # 【修正】実際のプロンプトを指定
+                        'fast_cli': False
                     }
 
                     print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                     try:
                         with ConnectHandler(**device) as net:
-                            # C1200はログイン時にバナー等が出ることがあるため、一度Enterを送る
-                            net.send_command("\n", expect_string=r'[>#]')
-                            
                             if ">" in net.find_prompt(): net.enable()
                             current_data, log_body, search_hits = {}, f"\n! --- Append Log: {datetime.now()} ---\n! Device: {h_name}\n\n", defaultdict(list)
                             for cmd in target_commands:
