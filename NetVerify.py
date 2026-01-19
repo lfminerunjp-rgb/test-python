@@ -242,20 +242,16 @@ def main():
                     host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                     h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
                     
-                    # --- デバイス情報の定義 (修正箇所) ---
+                    # --- 引数をNetmikoのバージョンに合わせて修正 ---
                     device = { 
                         'device_type': host.get('vendor', 'cisco_ios') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
                         'host': ip, 
                         'username': host.get('user'), 
                         'password': host.get('pw'), 
                         'secret': host.get('en_pw'), 
-                        'global_delay_factor': 2,
-                        # C1200等の "User Name:" プロンプトに対応するための設定を追加
-                        'auth_username_prompt': r'User\s?Name:',
-                        'auth_password_prompt': r'Password:',
-                        'read_timeout': 60
+                        'global_delay_factor': 4,  # プロンプト認識を安定させるため値を上げました
+                        'read_timeout': 90         # タイムアウト時間を十分に確保しました
                     }
-                    # ------------------------------------
 
                     print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                     try:
