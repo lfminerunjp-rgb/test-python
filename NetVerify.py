@@ -182,142 +182,144 @@ def main():
             if mode_in not in mode_map: sys.stdout.write(CLEAR_LINE); continue
         except (KeyboardInterrupt, EOFError): sys.exit(0)
 
+        # 【改善】リスト表示をループの外に配置して複製を防止
+        hosts = load_hosts_flexible()
+        if not hosts: continue
+        print(f"\n{YELLOW}[ 対象一覧 - モード: {mode_map[mode_in]} ]{RESET}")
+        for i, h in enumerate(hosts): print(f"{i}: {h.get('name')} ({h.get('ip')})")
+
+        indices = []
         while True:
-            hosts = load_hosts_flexible()
-            if not hosts: break
-            
-            # リスト複製防止：一度だけ表示
-            print(f"\n{YELLOW}[ 対象一覧 - モード: {mode_map[mode_in]} ]{RESET}")
-            for i, h in enumerate(hosts): print(f"{i}: {h.get('name')} ({h.get('ip')})")
-            
-            indices = []
-            while True:
-                try:
-                    choice = input(f"番号 (all/0.../b): ").lower().strip()
-                    if choice == 'b': break
-                    if not choice: sys.stdout.write(CLEAR_LINE); continue
-                    indices = range(len(hosts)) if choice == 'all' else [int(i.strip()) for i in choice.split(',') if i.strip().isdigit() and int(i.strip()) < len(hosts)]
-                    if indices: break
-                    else: sys.stdout.write(CLEAR_LINE)
-                except (KeyboardInterrupt, EOFError): break
-
-            if choice == 'b': # メニューに戻る
-                show_mode_menu()
-                break
-
-            # --- 処理実行セクション ---
             try:
-                if mode_in in ['0', '0t']:
+                choice = input(f"番号 (all/0.../b): ").lower().strip()
+                if choice == 'b': break
+                if not choice: sys.stdout.write(CLEAR_LINE); continue
+                indices = range(len(hosts)) if choice == 'all' else [int(i.strip()) for i in choice.split(',') if i.strip().isdigit() and int(i.strip()) < len(hosts)]
+                if indices: break
+                else: sys.stdout.write(CLEAR_LINE)
+            except (KeyboardInterrupt, EOFError): break
+
+        if choice == 'b': 
+            show_mode_menu()
+            continue
+
+        # --- 処理実行セクション ---
+        try:
+            if mode_in in ['0', '0t']:
+                for idx in indices:
+                    host = hosts[idx]; ip = host.get('ip')
+                    res = ping_check(ip)
+                    status = f"{GREEN}[SUCCESS]{RESET}" if res else f"{RED}[FAIL]{RESET}"
+                    print(f"  \n{status} {host.get('name')} ({ip})")
+                    if mode_in == '0t':
+                        trace_result = trace_check(ip)
+                        print(f"    [Trace Result]\n{trace_result}\n\n")
+                continue
+
+            if mode_in == '1':
+                if not tt_macro_exe: tt_macro_exe = find_teraterm()
+                if not tt_macro_exe: print(f"{RED}[!] ttpmacro.exeが見つかりません。{RESET}")
+                else:
                     for idx in indices:
-                        host = hosts[idx]; ip = host.get('ip')
-                        res = ping_check(ip)
-                        status = f"{GREEN}[SUCCESS]{RESET}" if res else f"{RED}[FAIL]{RESET}"
-                        print(f"  \n{status} {host.get('name')} ({ip})")
-                        if mode_in == '0t':
-                            trace_result = trace_check(ip)
-                            print(f"    [Trace Result]\n{trace_result}\n\n")
-                    continue
+                        host = hosts[idx]
+                        print(f"  {GREEN}>>> TeraTerm起動: {host.get('name')}{RESET}")
+                        ttl = create_ttl_macro(host)
+                        subprocess.Popen([tt_macro_exe, ttl])
+                        time.sleep(0.5)
+                        try: os.remove(ttl)
+                        except: pass
+                continue
 
-                if mode_in == '1':
-                    if not tt_macro_exe: tt_macro_exe = find_teraterm()
-                    if not tt_macro_exe: print(f"{RED}[!] ttpmacro.exeが見つかりません。{RESET}")
-                    else:
-                        for idx in indices:
-                            host = hosts[idx]
-                            print(f"  {GREEN}>>> TeraTerm起動: {host.get('name')}{RESET}")
-                            ttl = create_ttl_macro(host)
-                            subprocess.Popen([tt_macro_exe, ttl])
-                            time.sleep(0.5); 
-                            try: os.remove(ttl)
-                            except: pass
-                    continue
+            # ログ・解析モード
+            ensure_dirs()
+            today = datetime.now().strftime("%Y%m%d")
+            for i, idx in enumerate(indices):
+                host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
+                h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
+                
+                device = { 
+                    'device_type': host.get('vendor', 'cisco_ios') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
+                    'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
+                    'secret': host.get('en_pw'), 'global_delay_factor': 2
+                }
 
-                ensure_dirs()
-                today = datetime.now().strftime("%Y%m%d")
-                for i, idx in enumerate(indices):
-                    host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
-                    h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
-                    v_base = host.get('vendor', 'cisco_ios')
-                    v_proto = '_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''
-                    
-                    device = { 
-                        'device_type': f"{v_base}{v_proto}", 'host': ip, 
-                        'username': host.get('user'), 'password': host.get('pw'), 
-                        'secret': host.get('en_pw'), 'global_delay_factor': 2
-                    }
-
-                    print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
-                    net = None
+                print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
+                net = None
+                try:
+                    # 1次試行
                     try:
-                        try:
+                        net = ConnectHandler(**device)
+                    except NetmikoAuthenticationException as e:
+                        # 【重要】allowed types: [''] (C1200) に対する自動救済ロジック
+                        if "allowed types" in str(e) or "authentication type" in str(e).lower():
+                            print(f"  {YELLOW}[INFO] 特殊な認証を検知しました。C1200救済モードで再試行します...{RESET}")
+                            # 認証情報を空にしてSSHトンネルだけ確立を試みる
+                            device['username'] = ''
+                            device['password'] = ''
+                            device['device_type'] = 'generic' # 汎用ドライバで「中に入る」ことを優先
                             net = ConnectHandler(**device)
-                        except NetmikoAuthenticationException as e:
-                            # C1200救済ロジック：genericドライバを使用（修正済み）
-                            if "allowed types" in str(e) or "authentication type" in str(e).lower():
-                                print(f"  {YELLOW}[INFO] 特殊な認証を検知しました。C1200モードで再試行します...{RESET}")
-                                device['password'] = '' 
-                                device['device_type'] = 'generic' # リストに実在する汎用ドライバに変更
-                                net = ConnectHandler(**device)
-                            else: raise
+                        else: raise
 
-                        # 画面上のログインプロンプトに応答
-                        for _ in range(3):
-                            buf = net.read_channel()
-                            if any(x in buf for x in ['User Name:', 'Username:', 'login:']):
-                                net.write_channel(host.get('user') + '\n')
-                                time.sleep(1)
-                            elif any(x in buf for x in ['Password:', 'password:']):
-                                net.write_channel(host.get('pw') + '\n')
-                                time.sleep(1)
-                            else: break
-                        
-                        if ">" in net.find_prompt(): net.enable()
-                        
-                        current_data, log_body, search_hits = {}, f"\n! --- Append Log: {datetime.now()} ---\n! Device: {h_name}\n\n", defaultdict(list)
-                        for cmd in target_commands:
-                            print(f"  - {cmd}"); raw_out = net.send_command(cmd, strip_prompt=False, strip_command=False)
-                            log_body += f"{raw_out}\n\n"
-                            
-                            s_path = os.path.join(BASE_DIR, "search.txt")
-                            if os.path.exists(s_path):
-                                with open(s_path, "r", encoding='utf-8') as f: keywords = [l.strip() for l in f if l.strip()]
-                                for kw in keywords:
-                                    for line in raw_out.splitlines():
-                                        if kw.lower() in line.lower():
-                                            hi = re.sub(re.escape(kw), lambda m: f"{YELLOW}{m.group()}{RESET}", line.strip(), flags=re.IGNORECASE)
-                                            search_hits[kw].append(f"[{cmd}] {hi}")
+                    # 接続後の対話ログイン処理
+                    for _ in range(5): # 最大5回画面をチェック
+                        buf = net.read_channel()
+                        if any(x in buf for x in ['User Name:', 'Username:', 'login:']):
+                            net.write_channel(host.get('user') + '\n')
+                            time.sleep(1)
+                        elif any(x in buf for x in ['Password:', 'password:']):
+                            net.write_channel(host.get('pw') + '\n')
+                            time.sleep(1)
+                        elif '>' in net.find_prompt() or '#' in net.find_prompt():
+                            break
 
-                            if mode_in in ['3', '4']:
-                                try:
-                                    parsed = net.send_command(cmd, use_textfsm=True)
-                                    current_data[cmd] = restructure_config(parsed) if "running-config" in cmd else restructure_data(parsed)
-                                except: current_data[cmd] = raw_out
-                        
-                        if search_hits:
-                            print(f"\n{YELLOW}[ 検索結果 ]{RESET}"); [print(f"▼ '{YELLOW}{k}{RESET}':\n" + "\n".join(v)) for k, v in search_hits.items()]
-
-                        if mode_in in ['2', '4']:
-                            log_path = os.path.join(LOG_DIR, f"{h_file}_{today}.log")
-                            with open(log_path, "a", encoding='utf-8') as f: f.write(log_body)
-                            print(f"  {BLUE}[Log] logs/{h_file}_{today}.log (Append){RESET}")
-                        
-                        if mode_in in ['3', '4']:
-                            snap_p = os.path.join(SNAPSHOT_DIR, f"snapshot_{h_file}.json")
-                            if os.path.exists(snap_p):
-                                with open(snap_p, "r", encoding='utf-8') as f: old_data = json.load(f)
-                                diff = DeepDiff(old_data, current_data, ignore_order=True)
-                                if diff: print(f"\n{YELLOW}== 差分検出 =={RESET}\n{diff}")
-                                else: print(f"  {GREEN}[OK] 差分なし{RESET}")
-                                os.rename(snap_p, os.path.join(SNAPSHOT_DIR, f"snapshot_{h_file}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"))
-                            with open(snap_p, "w", encoding='utf-8') as f: json.dump(current_data, f, indent=4, ensure_ascii=False)
+                    if ">" in net.find_prompt(): net.enable()
                     
-                    except Exception as e: print(f"  {RED}[!] エラー: {e}{RESET}")
-                    finally:
-                        if net: net.disconnect()
-                    if i == len(indices) - 1: print("\n" + "=" * 70)
-            
-            except KeyboardInterrupt: print(f"\n{YELLOW}[CANCEL] 中断されました。機器一覧に戻ります。{RESET}")
-            print("")
+                    # 以降は通常の取得処理
+                    current_data, log_body, search_hits = {}, f"\n! --- Append Log: {datetime.now()} ---\n! Device: {h_name}\n\n", defaultdict(list)
+                    for cmd in target_commands:
+                        print(f"  - {cmd}"); raw_out = net.send_command(cmd, strip_prompt=False, strip_command=False)
+                        log_body += f"{raw_out}\n\n"
+                        
+                        s_path = os.path.join(BASE_DIR, "search.txt")
+                        if os.path.exists(s_path):
+                            with open(s_path, "r", encoding='utf-8') as f: keywords = [l.strip() for l in f if l.strip()]
+                            for kw in keywords:
+                                for line in raw_out.splitlines():
+                                    if kw.lower() in line.lower():
+                                        hi = re.sub(re.escape(kw), lambda m: f"{YELLOW}{m.group()}{RESET}", line.strip(), flags=re.IGNORECASE)
+                                        search_hits[kw].append(f"[{cmd}] {hi}")
+
+                        if mode_in in ['3', '4']:
+                            try:
+                                parsed = net.send_command(cmd, use_textfsm=True)
+                                current_data[cmd] = restructure_config(parsed) if "running-config" in cmd else restructure_data(parsed)
+                            except: current_data[cmd] = raw_out
+                    
+                    if search_hits:
+                        print(f"\n{YELLOW}[ 検索結果 ]{RESET}"); [print(f"▼ '{YELLOW}{k}{RESET}':\n" + "\n".join(v)) for k, v in search_hits.items()]
+
+                    if mode_in in ['2', '4']:
+                        log_path = os.path.join(LOG_DIR, f"{h_file}_{today}.log")
+                        with open(log_path, "a", encoding='utf-8') as f: f.write(log_body)
+                        print(f"  {BLUE}[Log] logs/{h_file}_{today}.log (Append){RESET}")
+                    
+                    if mode_in in ['3', '4']:
+                        snap_p = os.path.join(SNAPSHOT_DIR, f"snapshot_{h_file}.json")
+                        if os.path.exists(snap_p):
+                            with open(snap_p, "r", encoding='utf-8') as f: old_data = json.load(f)
+                            diff = DeepDiff(old_data, current_data, ignore_order=True)
+                            if diff: print(f"\n{YELLOW}== 差分検出 =={RESET}\n{diff}")
+                            else: print(f"  {GREEN}[OK] 差分なし{RESET}")
+                            os.rename(snap_p, os.path.join(SNAPSHOT_DIR, f"snapshot_{h_file}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"))
+                        with open(snap_p, "w", encoding='utf-8') as f: json.dump(current_data, f, indent=4, ensure_ascii=False)
+                
+                except Exception as e: print(f"  {RED}[!] エラー: {e}{RESET}")
+                finally:
+                    if net: net.disconnect()
+                if i == len(indices) - 1: print("\n" + "=" * 70)
+        
+        except KeyboardInterrupt: print(f"\n{YELLOW}[CANCEL] 中断されました。{RESET}")
+        print("")
 
 if __name__ == "__main__":
     try: main()
