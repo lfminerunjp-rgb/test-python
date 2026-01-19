@@ -29,7 +29,7 @@ else: BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SNAPSHOT_DIR, LOG_DIR = os.path.join(BASE_DIR, "snapshots"), os.path.join(BASE_DIR, "logs")
 
 def ensure_dirs():
-    """snapshots, logsフォルダが存在することを確認する"""
+    """フォルダが存在しない場合に作成する"""
     for d in [SNAPSHOT_DIR, LOG_DIR]:
         if not os.path.exists(d):
             os.makedirs(d, exist_ok=True)
@@ -37,6 +37,7 @@ def ensure_dirs():
 # --- 機能関数 ---
 
 def ping_check(ip):
+    """OSのPingコマンドを使用して疎通確認 (モード0用)"""
     param = '-n' if os.name == 'nt' else '-c'
     cmd = ['ping', param, '1', '-w', '1000', ip]
     try:
@@ -46,18 +47,19 @@ def ping_check(ip):
     except: return False
 
 def trace_check(ip):
-    print(f"    {BLUE}[INFO] Tracerouteを実行中... (w:200ms){RESET}")
+    """OSのTracerouteコマンドを使用して経路確認 (モード0t用)"""
+    print(f"    {BLUE}[INFO] Tracerouteを実行中... (h:15, w:1000ms){RESET}")
     if os.name == 'nt':
-        cmd = ['tracert', '-d', '-w', '200', ip]
+        cmd = ['tracert', '-d', '-h', '15', '-w', '1000', ip]
     else:
-        cmd = ['traceroute', '-n', '-w', '0.2', ip]
+        cmd = ['traceroute', '-n', '-m', '15', '-w', '1', ip]
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='cp932' if os.name == 'nt' else 'utf-8')
         lines = res.stdout.splitlines()
         filtered = []
         for line in lines:
             l_s = line.strip()
-            if not l_s or any(x in l_s for x in ["トレースしています", "ホップ数は最大", "完了しました"]): continue
+            if not l_s or any(x in l_s for x in ["へのルートをトレースしています", "経由するホップ数は最大", "トレースを完了しました"]): continue
             filtered.append(line)
         return "\n".join(filtered)
     except KeyboardInterrupt: return f"{YELLOW}Tracerouteは中断されました。{RESET}"
@@ -74,6 +76,7 @@ def find_teraterm():
     return None
 
 def create_ttl_macro(host_info):
+    """C1200等の2段階ログインに対応したログインマクロ"""
     h_name, ip = host_info.get('name'), host_info.get('ip')
     user, pw, en_pw = host_info.get('user'), host_info.get('pw'), host_info.get('en_pw')
     proto = str(host_info.get('protocol')).lower()
@@ -86,9 +89,7 @@ def create_ttl_macro(host_info):
             f.write(f"connect '{ip}:22 /ssh /2 /auth=password /user={user} /passwd={pw}'\n")
         
         f.write("pause 1\n")
-        # 接続直後の全パターンを待ち受け
         f.write("wait 'User Name:' 'Username:' 'login:' '>' '#'\n")
-        # ログインプロンプト(1-3番目)が来た場合のみユーザー名とパスを送る
         f.write("if result >= 1 and result <= 3 then\n")
         f.write(f"  sendln '{user}'\n")
         f.write("  wait 'Password:' 'password:'\n")
@@ -96,7 +97,6 @@ def create_ttl_macro(host_info):
         f.write("  wait '>' '#'\n")
         f.write("endif\n")
         
-        # Enable化判定 (プロンプトが > だった場合のみ実行)
         f.write("if result = 4 then\n")
         f.write("  sendln 'enable'\n")
         f.write("  waitregex '[Pp]assword|パスワード|暗号'\n")
@@ -183,14 +183,14 @@ def main():
             if mode_in not in mode_map: sys.stdout.write(CLEAR_LINE); continue
         except (KeyboardInterrupt, EOFError): sys.exit(0)
 
-        # 機器一覧を表示するループ
         while True:
             hosts = load_hosts_flexible()
             if not hosts: break
+            
+            # リストを1回だけ表示
             print(f"\n{YELLOW}[ 対象一覧 - モード: {mode_map[mode_in]} ]{RESET}")
             for i, h in enumerate(hosts): print(f"{i}: {h.get('name')} ({h.get('ip')})")
             
-            # 番号入力待ちループ
             indices = []
             while True:
                 try:
@@ -202,11 +202,11 @@ def main():
                     else: sys.stdout.write(CLEAR_LINE)
                 except (KeyboardInterrupt, EOFError): break
 
-            if choice == 'b': # 画面をクリアせずにメニューに戻る
-                show_mode_menu()
+            if choice == 'b': 
+                show_mode_menu() # クリアせずメニュー表示
                 break
 
-            # 処理セクション
+            # 処理実行セクション
             try:
                 if mode_in in ['0', '0t']:
                     for idx in indices:
@@ -245,12 +245,11 @@ def main():
                     host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                     h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
                     
-                    # 引数エラー修正: paramiko_kwargs を個別に渡す
+                    # 修正：不具合の原因となるパラメータ（look_for_keys等）を削除し、標準構成に戻す
                     device = { 
                         'device_type': host.get('vendor', 'cisco_ios') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
                         'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
-                        'secret': host.get('en_pw'), 'global_delay_factor': 2,
-                        'look_for_keys': False, 'allow_agent': False
+                        'secret': host.get('en_pw'), 'global_delay_factor': 2
                     }
 
                     print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
@@ -261,7 +260,6 @@ def main():
                             for cmd in target_commands:
                                 print(f"  - {cmd}"); raw_out = net.send_command(cmd, strip_prompt=False, strip_command=False)
                                 log_body += f"{raw_out}\n\n"
-                                
                                 for kw in search_keywords:
                                     for line in raw_out.splitlines():
                                         if kw.lower() in line.lower():
