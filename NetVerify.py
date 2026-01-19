@@ -37,7 +37,7 @@ def ensure_dirs():
 # --- 機能関数 ---
 
 def ping_check(ip):
-    """OSのPingコマンドを使用して疎通確認"""
+    """OSのPingコマンドを使用して疎通確認 (モード0用)"""
     param = '-n' if os.name == 'nt' else '-c'
     cmd = ['ping', param, '1', '-w', '1000', ip]
     try:
@@ -47,7 +47,7 @@ def ping_check(ip):
     except: return False
 
 def trace_check(ip):
-    """OSのTracerouteコマンドを使用して経路確認"""
+    """OSのTracerouteコマンドを使用して経路確認 (モード0t用)"""
     print(f"    {BLUE}[INFO] Tracerouteを実行中... (w:200ms){RESET}")
     if os.name == 'nt':
         cmd = ['tracert', '-d', '-w', '200', ip]
@@ -76,7 +76,7 @@ def find_teraterm():
     return None
 
 def create_ttl_macro(host_info):
-    """【TTLは変更なし】C1200等の2段階ログインに対応したログインマクロ"""
+    """C1200等の2段階ログインに対応したログインマクロ (SSH/Telnet共通)"""
     h_name, ip = host_info.get('name'), host_info.get('ip')
     user, pw, en_pw = host_info.get('user'), host_info.get('pw'), host_info.get('en_pw')
     proto = str(host_info.get('protocol')).lower()
@@ -242,25 +242,18 @@ def main():
                     host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                     h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
                     
-                    # --- Python側の接続設定 (修正版: 引数エラー回避) ---
+                    # --- 修正箇所: device定義に username_pattern を追加 ---
                     device = { 
-                        'device_type': host.get('vendor', 'cisco_s200') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
-                        'host': ip, 
-                        'username': host.get('user'), 
-                        'password': host.get('pw'), 
-                        'secret': host.get('en_pw'), 
-                        
-                        # --- タイムアウト対策 ---
-                        'global_delay_factor': 4,       # かなり遅くして待機時間を確保
-                        'conn_timeout': 30,             # 接続のタイムアウト
-                        'fast_cli': False               # SMBスイッチ向けに丁寧に入力
-                        # username_prompt, password_prompt はConnectHandlerでは使えないため削除しました
+                        'device_type': host.get('vendor', 'cisco_ios') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
+                        'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
+                        'secret': host.get('en_pw'), 'global_delay_factor': 2,
+                        'username_pattern': r"(?:[Uu]ser\s*[Nn]ame|[Ll]ogin|user):"
                     }
+                    # --------------------------------------------------
 
                     print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                     try:
                         with ConnectHandler(**device) as net:
-                            # ログイン成功後
                             if ">" in net.find_prompt(): net.enable()
                             current_data, log_body, search_hits = {}, f"\n! --- Append Log: {datetime.now()} ---\n! Device: {h_name}\n\n", defaultdict(list)
                             for cmd in target_commands:
