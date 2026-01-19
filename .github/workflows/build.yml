@@ -18,11 +18,12 @@ jobs:
     - name: Install dependencies
       run: |
         pip install pyinstaller
-        # もし他にも必要なライブラリがあればここに追記してください
-        # 例: pip install pandas
+        # 必要なライブラリをすべてここに書きます
+        pip install netmiko deepdiff openpyxl ntc-templates
 
     - name: Build EXE
-      run: pyinstaller --onefile NetVerify.py
+      # ntc-templatesのために --collect-all を追加しています
+      run: pyinstaller --onefile --collect-all ntc_templates NetVerify.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
