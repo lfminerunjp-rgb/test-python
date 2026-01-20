@@ -17,18 +17,15 @@ except ImportError:
 YELLOW = '\033[33m'; RED = '\033[31m'; BLUE = '\033[36m'; GREEN = '\033[32m'; RESET = '\033[0m'
 CLEAR_LINE = '\033[F\033[K'
 
-# Windows環境でのANSIエスケープシーケンス有効化
 if os.name == 'nt':
     try:
         kernel32 = ctypes.windll.kernel32
+        # ANSIエスケープシーケンスを有効化
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
-    except:
-        pass
+    except: pass
 
-if getattr(sys, 'frozen', False): 
-    BASE_DIR = os.path.dirname(sys.executable)
-else: 
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False): BASE_DIR = os.path.dirname(sys.executable)
+else: BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SNAPSHOT_DIR, LOG_DIR = os.path.join(BASE_DIR, "snapshots"), os.path.join(BASE_DIR, "logs")
 
@@ -49,21 +46,18 @@ def ping_check(ip):
         return res.returncode == 0
     except KeyboardInterrupt:
         raise
-    except: 
-        return False
+    except: return False
 
 def trace_check(ip):
-    """OSのTracerouteコマンドを使用して経路確認 (モード0t用)"""
+    """OSのTracerouteコマンドを使用して経路確認 (モード0t用) -d -w 200"""
     print(f"    {BLUE}[INFO] Tracerouteを実行中... (w:200ms){RESET}")
     if os.name == 'nt':
         cmd = ['tracert', '-d', '-w', '200', ip]
-        encoding = 'cp932'
     else:
         cmd = ['traceroute', '-n', '-w', '0.2', ip]
-        encoding = 'utf-8'
 
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding=encoding)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='cp932' if os.name == 'nt' else 'utf-8')
         lines = res.stdout.splitlines()
         filtered = []
         for line in lines:
@@ -85,9 +79,8 @@ def find_teraterm():
     for p in standard_paths:
         if os.path.exists(p): return p
     try:
-        if os.name == 'nt':
-            result = subprocess.check_output('where /r C:\\ ttpmacro.exe', shell=True, stderr=subprocess.STDOUT)
-            if result: return result.decode('cp932').splitlines()[0].strip()
+        result = subprocess.check_output('where /r C:\\ ttpmacro.exe', shell=True, stderr=subprocess.STDOUT)
+        if result: return result.decode('cp932').splitlines()[0].strip()
     except: pass
     return None
 
@@ -200,9 +193,7 @@ def main():
 
         while True:
             hosts = load_hosts_flexible()
-            if not hosts: 
-                print(f"{RED}[!] hosts.xlsx が見つかりません。{RESET}")
-                break
+            if not hosts: break
             
             # 対象一覧を出力
             print(f"\n{YELLOW}[ 対象一覧 - モード: {mode_map[mode_in]} ]{RESET}")
@@ -226,8 +217,8 @@ def main():
                     break
                 except: sys.stdout.write(CLEAR_LINE)
 
-            # --- 修正箇所: choice == 'b' の時の画面クリアを削除 ---
             if choice == 'b': 
+                os.system('cls' if os.name == 'nt' else 'clear')
                 show_mode_menu()
                 break
 
@@ -271,13 +262,14 @@ def main():
                     host = hosts[idx]; h_name, ip = str(host.get('name')), host.get('ip')
                     h_file, target_commands = sanitize_filename(h_name), host.get('command_list', [])
                     
+                    # エラー修正：session_preparation を削除
                     device = { 
                         'device_type': host.get('vendor', 'cisco_ios') + ('_telnet' if str(host.get('protocol')).lower() == 'telnet' else ''), 
                         'host': ip, 'username': host.get('user'), 'password': host.get('pw'), 
                         'secret': host.get('en_pw'), 'global_delay_factor': 2 
                     }
 
-                    print("\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
+                    print("\n\n\n\n\n" + "=" * 70); print(f"{GREEN}>>> [{h_name}]{RESET}")
                     try:
                         with ConnectHandler(**device) as net:
                             if ">" in net.find_prompt(): net.enable()
@@ -344,7 +336,7 @@ def main():
                                     os.rename(snap_p, archive_p)
                                 with open(snap_p, "w", encoding='utf-8') as f: json.dump(current_data, f, indent=4, ensure_ascii=False)
                     except Exception as e: print(f"  {RED}[!] エラー: {e}{RESET}")
-                    if i == len(indices) - 1: print("\n" + "=" * 70)
+                    if i == len(indices) - 1: print("\n\n\n\n\n" + "=" * 70)
 
             except KeyboardInterrupt:
                 print(f"\n{YELLOW}[CANCEL] 中断されました。機器一覧に戻ります。{RESET}")
