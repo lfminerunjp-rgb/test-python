@@ -18,15 +18,23 @@ jobs:
     - name: Install dependencies
       run: |
         pip install pyinstaller
-        # 必要なライブラリをすべてここに書きます
-        pip install netmiko deepdiff openpyxl ntc-templates
+        # NumPy 2.x のエラーを避けるため 1.x 系を明示的に指定
+        pip install "numpy<2"
+        # スクリプトで使用している全ライブラリをインストール
+        pip install PySide6 netmiko openpyxl matplotlib networkx ntc-templates
 
     - name: Build EXE
-      # ntc-templatesのために --collect-all を追加しています
-      run: pyinstaller --onefile --collect-all ntc_templates NetVerify.py
+      # --noconsole (または -w): GUIツールなので背後で黒い画面を出さない設定
+      # --collect-all: ntc_templates, matplotlib, networkx の依存ファイルを強制的に含める
+      run: |
+        pyinstaller --onefile --noconsole `
+        --collect-all ntc_templates `
+        --collect-all matplotlib `
+        --collect-all networkx `
+        NetVerify.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: my-executable
+        name: NetVerify-Executable
         path: dist/NetVerify.exe
